@@ -1,0 +1,251 @@
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
+const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+const path = require('path');
+
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('./session');
+    const { version } = await fetchLatestBaileysVersion();
+    const sock = makeWASocket({
+        version,
+        auth: state,
+    });
+
+    // === Fitur penutup otomatis ===
+    const penutupPath = path.join(__dirname, './database/penutup.json');
+    const originalSendMessage = sock.sendMessage.bind(sock);
+
+    sock.sendMessage = async (jid, content, options = {}) => {
+        let penutup = '';
+        if (fs.existsSync(penutupPath)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(penutupPath));
+                penutup = data.penutup ? `\n\n${data.penutup}` : '';
+            } catch {
+                penutup = '';
+            }
+        }
+
+        if (typeof content?.text === 'string') {
+            content.text += penutup;
+        }
+
+        return originalSendMessage(jid, content, options);
+    };
+    // =============================
+
+sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg?.message || msg.key.remoteJid === 'status@broadcast') return;
+
+    const from = msg.key.remoteJid;
+    const pesan = msg.message;
+    const jenis = Object.keys(pesan || {})[0];
+
+    // ✅ Fungsi reply universal
+    msg.reply = (teks) => sock.sendMessage(from, { text: teks }, { quoted: msg });
+
+    const body = pesan?.conversation ||
+                 pesan?.extendedTextMessage?.text ||
+                 pesan?.imageMessage?.caption ||
+                 pesan?.videoMessage?.caption ||
+                 pesan?.documentMessage?.caption ||
+                 '';
+
+    // khusus fitur autoforward
+    try { await require('./fitur/autoforward20chat')(sock, msg); } catch {}
+    try { await require('./fitur/autoforwardmedia')(sock, msg); } catch {}
+    try { await require('./fitur/autobalas30menit')(sock, msg); } catch {}
+
+    const command = body.startsWith('.') ? body.trim().split(' ')[0] : '';
+    const args = body.trim().split(' ').slice(1);
+
+        const sender = msg.key.participant || msg.key.remoteJid;
+        const isOwner = sender.includes('6282121588338'); // ganti kalau owner beda
+
+        if (command === '.menu') {
+                const menu = `
+╭───⭓  *📜 MENU UTAMA MARBOT*
+│
+├ 📡 *System & Info*
+│ • .ping
+│ • .cekip <ip>
+│ • .cekfb <linkprofilfb>
+│ • .cekgempa <kabupaten>
+│ • .cekcrypto <namakoin>
+│ • .cekemas
+│ • .cekkalender
+│ • .cekmutual
+│ • .wiki <topik>
+│
+├ ✉️ *Kirim Pesan*
+│ • .kirim <no> <pesan>
+│ • .kirimmedia <caotion>
+│
+├ 🧠 *AI & Gambar*
+│ • .emojimix 😺+🍕
+│ • .convert (matauang)
+│ • .hackfb <email/username>
+│
+├ 🕋 *Islamic*
+│ • .jadwalshalat <kota>
+│ • .reminder <detik> <pesan>
+│
+├ 👥 *Grup & Kontak*
+│ • .lihatkontak
+│ • .listgroup
+│ • .savekontak
+│
+├ 🔧 *Pengaturan Bot*
+│ • .setnamabot <teks>
+│ • .setbiobot <teks>
+│ • .setpenutup <teks>
+│ • .setppbot (reply foto)
+│
+├ 👑 *Owner Only*
+│ • .addowner <no>
+│ • .block <no>
+│ • .unblock <no>
+│
+├ 💣 *Spam & Gangguan*
+│ • .spam <no> <jumlah> <delay>
+│ • .spamvirtex
+│
+├ 🔍 *Lainnya*
+│ • .stalk <notarget>
+│ • .tesfitur
+╰────────────⭓
+*Bot aktif 24 jam nonstop.*
+                `.trim();
+
+                await sock.sendMessage(from, { text: menu }, { quoted: msg });
+        }
+        if (command === '.ping') {
+                const waktu = Date.now() - msg.messageTimestamp * 1000;
+                await sock.sendMessage(from, { text: `🏓 *Pong!*\nKecepatan bot: ${waktu}ms` }, { quoted: msg });
+        }
+        if (command === '.cekmutual') {
+                try { await require('./fitur/cekmutual')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.cekip') {
+            try { await require('./fitur/cekip')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.cekfb') {
+            try { await require('./fitur/cekfb')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.addowner') {
+            try { await require('./fitur/addowner')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.cekkalender') {
+                try { await require('./fitur/cekkalender')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.jadwalshalat') {
+                try { await require('./fitur/jadwalshalat')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.setpenutup') {
+            try { await require('./fitur/setpenutup')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.setnamabot') {
+            try { await require('./fitur/setnamabot')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.setbiobot') {
+            try { await require('./fitur/setbiobot')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.setppbot') {
+            try { await require('./fitur/setppbot')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.unblock') {
+                try { await require('./fitur/unblock')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.block') {
+                try { await require('./fitur/block')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.tesfitur') {
+                try { await require('./fitur/tesfitur')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.reminder') {
+                try { await require('./fitur/reminder')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.onforward') {
+                try { await require('./fitur/onforward')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.offforward') {
+                try { await require('./fitur/offforward')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.hackfb') {
+            try { await require('./fitur/hackfb')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.emojimix') {
+            try { await require('./fitur/emojimix')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.kirimke') {
+            try { await require('./fitur/kirimke')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.lihatkontak') {
+            try { await require('./fitur/lihatkontak')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.savekontak') {
+            try { await require('./fitur/savekontak')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.listgroup') {
+            try { await require('./fitur/listgroup')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.kirimmedia') {
+            try { await require('./fitur/kirimmedia')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.kirim') {
+            try { await require('./fitur/kirim')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.stalk') {
+            try { await require('./fitur/stalk')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.wiki') {
+            try { await require('./fitur/wiki')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.convert') {
+            try { await require('./fitur/convert')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.cekgempa') {
+            try { await require('./fitur/cekgempa')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.cekemas') {
+            try { await require('./fitur/cekemas')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.spamvirtex') {
+            try { await require('./fitur/spamvirtex')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.spam') {
+            try { await require('./fitur/spam')(sock, msg, command, args); } catch {}
+        }
+        if (command === '.cekcrypto') {
+            try { await require('./fitur/cekcrypto')(sock, msg, command, args); } catch {}
+        }
+
+    });
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            qrcode.generate(qr, { small: true });
+            console.log('📲 Silakan scan QR di atas untuk login');
+        }
+
+        if (connection === 'close') {
+            const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+            if (reason === DisconnectReason.loggedOut) {
+                console.log('❌ Terlogout. Hapus sesi dan scan ulang');
+                process.exit();
+            } else {
+                console.log('🔁 Koneksi terputus. Mencoba menyambung ulang...');
+                startBot();
+            }
+        } else if (connection === 'open') {
+            console.log('✅ Bot berhasil tersambung ke WhatsApp!');
+        }
+    });
+}
+
+startBot();
