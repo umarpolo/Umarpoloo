@@ -11,9 +11,9 @@ cd marbot
 npm install
 node bot.js
 
-# ✅ Scan QR Code yang muncul pakai WhatsApp kamu
-# 📌 Bot langsung aktif dan siap dipakai
+ ✅ Scan QR Code yang muncul pakai WhatsApp kamu
+ 📌 Bot langsung aktif dan siap dipakai
 
 
-#    By MARPOLO
-#    WA : 6282121588338
+    By MARPOLO
+    WA : 6282121588338
