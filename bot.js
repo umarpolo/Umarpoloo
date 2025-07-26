@@ -22,6 +22,26 @@ async function startBot() {
         version,
         auth: state,
     });
+
+    // TANGANI QR
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            console.log('📲 Scan QR ini:');
+            qrcode.generate(qr, { small: true });
+        }
+
+        if (connection === 'close') {
+            const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+            console.log('⚠️ Koneksi terputus. Alasan:', reason);
+            if (reason !== DisconnectReason.loggedOut) {
+                startBot();
+            }
+        } else if (connection === 'open') {
+            console.log('✅ Bot berhasil tersambung ke WhatsApp!');
+        }
+    });
 sock.ev.on('presence.update', async (update) => {
     const id = update?.id;
     const presence = update?.presences?.[id];
@@ -113,7 +133,77 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                  pesan?.videoMessage?.caption ||
                  pesan?.documentMessage?.caption ||
                  '';
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const responPath = path.join(__dirname, './respon.json');
 
+        if (body.startsWith('.jadibot')) {
+                const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+                const { Boom } = require('@hapi/boom');
+                const P = require('pino');
+                const fs = require('fs');
+                const path = require('path');
+
+                const sender = msg.key.fromMe ? sock.user.id : msg.key.participant || msg.key.remoteJid;
+                const senderNum = sender.replace(/[^0-9]/g, '');
+                const sessionFolder = `./jadibot-session/${senderNum}`;
+
+                if (!fs.existsSync(sessionFolder)) fs.mkdirSync(sessionFolder, { recursive: true });
+
+                const startBot = async () => {
+                    const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+                    const bot = makeWASocket({
+                        auth: state,
+                        printQRInTerminal: true,
+                        logger: P({ level: 'silent' }),
+                    });
+
+                    bot.ev.on('creds.update', saveCreds);
+
+                    bot.ev.on('messages.upsert', async ({ messages }) => {
+                        const m = messages[0];
+                        if (!m.message) return;
+                        const from = m.key.remoteJid;
+                        const isi = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+                        if (isi === 'ping') {
+                            await bot.sendMessage(from, { text: 'pong dari bot clone!' });
+                        }
+                    });
+
+                    bot.ev.on('connection.update', (update) => {
+                        const { connection, lastDisconnect } = update;
+                        if (connection === 'close') {
+                            const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+                            if (reason !== DisconnectReason.loggedOut) {
+                                startBot(); // reconnect
+                            }
+                        } else if (connection === 'open') {
+                            console.log('✅ Bot clone siap:', senderNum);
+                        }
+                    });
+                };
+
+                await msg.reply('✅ Scan QR-nya muncul di termux. Silakan scan...');
+                startBot();
+        }
+        if (fs.existsSync(responPath)) {
+            const data = JSON.parse(fs.readFileSync(responPath));
+            const teksMasuk = (
+                msg.message?.conversation ||
+                msg.message?.extendedTextMessage?.text ||
+                ''
+            ).toLowerCase(); // Normalisasi huruf kecil
+
+            const cocok = Object.keys(data).find(k => k.toLowerCase() === teksMasuk);
+            if (cocok) {
+                await sock.sendMessage(from, { text: data[cocok] });
+                return;
+            }
+        }
+    } catch (e) {
+        console.log('❌ Error respon otomatis:', e);
+    }
     // khusus fitur autoforward
     try { await require('./fitur/autoforward20chat')(sock, msg); } catch {}
     try { await require('./fitur/autoforwardmedia')(sock, msg); } catch {}
@@ -125,6 +215,265 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
         const sender = msg.key.participant || msg.key.remoteJid;
         const isOwner = sender.includes('6282121588338'); // ganti kalau owner beda
 
+        if (command === '.cekhargaemas') {
+                try {
+                        const axios = require('axios');
+                        const cheerio = require('cheerio');
+
+                        const res = await axios.get('https://cekhargaemas.com/index?page=harga-emas-hari-ini-spot');
+                        const $ = cheerio.load(res.data);
+
+                        let usd = $('table.table tbody tr').eq(0).find('td').eq(1).text().trim();
+                        let idr = $('table.table tbody tr').eq(1).find('td').eq(1).text().trim();
+                        let update = $('table.table tbody tr').last().find('td').eq(1).text().trim();
+
+                        if (!usd || !idr) {
+                                return sock.sendMessage(from, { text: '❌ Gagal ambil data harga emas.' }, { quoted: msg });
+                        }
+
+                        const hasil = `💰 *Harga Spot Emas Dunia*\n` +
+                                        `• USD/oz: ${usd}\n` +
+                                        `• IDR/gram: ${idr}\n` +
+                                        `🕒 Update: ${update}`;
+
+                        sock.sendMessage(from, { text: hasil }, { quoted: msg });
+
+                } catch (e) {
+                        sock.sendMessage(from, { text: '❌ Gagal mengakses situs cekhargaemas.com' }, { quoted: msg });
+                        console.log('ERROR .cekhargaemas:', e);
+                }
+        }
+        if (command === '.cuaca') {
+                try {
+                        const axios = require('axios');
+                        const kota = body.split(' ').slice(1).join(' ');
+                        if (!kota) {
+                                await sock.sendMessage(from, { text: '❌ Format salah!\n\nContoh:\n.cuaca medan' });
+                                return;
+                        }
+
+                        const url = `https://wttr.in/${encodeURIComponent(kota)}?format=j1`;
+                        const { data } = await axios.get(url);
+
+                        if (!data || !data.current_condition || !data.weather) {
+                                await sock.sendMessage(from, { text: `❌ Data cuaca untuk *${kota}* tidak ditemukan.` });
+                                return;
+                        }
+
+                        const kondisi = data.current_condition[0];
+                        const prakiraan = data.weather[0].hourly;
+
+                        const pagi = prakiraan.find(j => parseInt(j.time) === 600);
+                        const siang = prakiraan.find(j => parseInt(j.time) === 1200);
+                        const malam = prakiraan.find(j => parseInt(j.time) === 1800);
+
+                        const teks = `🌤️ *Cuaca di ${kota.toUpperCase()}*\n\n` +
+                                `🌡️ Suhu Sekarang: ${kondisi.temp_C}°C\n` +
+                                `🌥️ Kondisi: ${kondisi.weatherDesc[0].value}\n` +
+                                `💧 Kelembapan: ${kondisi.humidity}%\n` +
+                                `💨 Angin: ${kondisi.windspeedKmph} km/h\n\n` +
+                                `📅 *Prakiraan Hari Ini:*\n` +
+                                `🌅 *Pagi:* ${pagi.weatherDesc[0].value}, ${pagi.tempC}°C\n` +
+                                `🌞 *Siang:* ${siang.weatherDesc[0].value}, ${siang.tempC}°C\n` +
+                                `🌙 *Malam:* ${malam.weatherDesc[0].value}, ${malam.tempC}°C`;
+
+                        await sock.sendMessage(from, { text: teks });
+                } catch (err) {
+                        console.log('❌ Error saat ambil cuaca:', err.message);
+                        await sock.sendMessage(from, { text: `❌ Gagal ambil data cuaca.` });
+                }
+        }
+        if (command === '.prediksi') {
+                try {
+                        const axios = require('axios');
+                        const coin = args[0]?.toLowerCase();
+
+                        if (!coin) {
+                                await sock.sendMessage(from, { text: '❌ Format salah!\n\nContoh:\n.prediksi btc' });
+                                return;
+                        }
+
+                        const res = await axios.get(`https://api.coingecko.com/api/v3/simple/price`, {
+                                params: {
+                                        ids: coin,
+                                        vs_currencies: 'usd,idr',
+                                        include_24hr_change: 'true'
+                                }
+                        });
+
+                        const data = res.data[coin];
+                        if (!data) {
+                                await sock.sendMessage(from, { text: `❌ Coin *${coin}* tidak ditemukan.` });
+                                return;
+                        }
+
+                        const usd = data.usd.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+                        const idr = data.idr.toLocaleString('id-ID', { style: 'currency', currency: 'IDR' });
+                        const change = data.usd_24h_change.toFixed(2);
+                        const trend = change >= 0 ? '📈 Naik' : '📉 Turun';
+
+                        await sock.sendMessage(from, {
+                                text:
+                                        `🔮 *Prediksi Harga Crypto: ${coin.toUpperCase()}*\n\n` +
+                                        `💵 USD: ${usd}\n` +
+                                        `💴 IDR: ${idr}\n` +
+                                        `📊 Perubahan 24 jam: ${change}%\n` +
+                                        `📈 Trend: ${trend}`
+                        });
+                } catch (err) {
+                        console.log('❌ Error prediksi crypto:', err);
+                        await sock.sendMessage(from, { text: '❌ Gagal mengambil data crypto.' });
+                }
+        }
+        if (command === '.sendtiktok') {
+                try {
+                        const axios = require('axios');
+                        const parts = body.trim().split(' ');
+
+                        if (parts.length !== 3) {
+                                await sock.sendMessage(from, {
+                                        text: '❌ Format salah!\n\nContoh:\n.sendtiktok https://vt.tiktok.com/... 628xxxxxxxxx'
+                                });
+                                return;
+                        }
+
+                        const shortUrl = parts[1];
+                        const nomor = parts[2];
+
+                        await sock.sendMessage(from, {
+                                text: '⏳ Mengambil video TikTok, tunggu bentar...'
+                        });
+
+                        // Resolve link TikTok pendek
+                        const resolvedUrl = await axios.head(shortUrl, { maxRedirects: 5 })
+                                .then(res => res.request.res.responseUrl)
+                                .catch(() => null);
+
+                        if (!resolvedUrl) {
+                                await sock.sendMessage(from, {
+                                        text: '❌ Gagal resolve link TikTok.'
+                                });
+                                return;
+                        }
+
+                        // Ambil video tanpa watermark dari tikwm API
+                        const api = `https://tikwm.com/api/?url=${encodeURIComponent(resolvedUrl)}`;
+                        const response = await axios.get(api);
+                        const result = response.data;
+
+                        if (!result || !result.data || !result.data.play) {
+                                await sock.sendMessage(from, {
+                                        text: '❌ Gagal mengambil video dari TikTok (API error).'
+                                });
+                                return;
+                        }
+
+                        const videoUrl = result.data.play;
+
+                        // Kirim video langsung ke target WhatsApp
+                        await sock.sendMessage(`${nomor}@s.whatsapp.net`, {
+                                video: { url: videoUrl },
+                                caption: '🎥 Video TikTok tanpa watermark'
+                        });
+
+                        // Konfirmasi ke pengirim
+                        await sock.sendMessage(from, {
+                                text: `✅ Video berhasil dikirim ke *${nomor}*`
+                        });
+
+                } catch (e) {
+                        console.log('❌ Error saat proses TikTok:', e);
+                        await sock.sendMessage(from, {
+                                text: '❌ Gagal memproses dan mengirim video TikTok.'
+                        });
+                }
+        }
+        if (command === '.sendmotivasi') {
+                const quotes = [
+                        "🌟 Jangan menyerah, hari ini sulit, besok lebih baik.",
+                        "💪 Kesuksesan adalah milik mereka yang tak kenal lelah!",
+                        "🚀 Teruslah melangkah walau pelan, asal jangan berhenti.",
+                        "🔥 Kamu lebih kuat dari yang kamu kira.",
+                        "🌈 Setiap hujan ada pelangi. Tetap semangat!",
+                        "💡 Gagal itu biasa, bangkit itu luar biasa.",
+                        "🎯 Jangan takut bermimpi besar. Mulailah sekarang!",
+                        "🌻 Hidup itu tentang proses, bukan hanya hasil.",
+                        "✨ Ubah lelahmu jadi berkah. Kamu pasti bisa!",
+                        "🧠 Fokus pada tujuan, bukan hambatan."
+                ];
+
+                const nomor = args[0]?.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+                if (!nomor || nomor.length < 12) {
+                        await sock.sendMessage(from, { text: '❌ Contoh: .sendmotivasi 6281234567890' });
+                        return;
+                }
+
+                const motivasi = quotes[Math.floor(Math.random() * quotes.length)];
+                const teks = `_*Halo, ada pesan motivasi buat kamu!*_\n\n${motivasi}`;
+
+                try {
+                        await sock.sendMessage(nomor, { text: teks });
+                        await sock.sendMessage(from, { text: `✅ Motivasi berhasil dikirim ke ${args[0]}` });
+                } catch (err) {
+                        await sock.sendMessage(from, { text: `❌ Gagal mengirim motivasi.\n${err.message}` });
+                }
+        }
+        if (command === '.listrespon') { try {
+                        const fs = require('fs');
+                        const path = require('path');
+                        const responPath = path.join(__dirname, './respon.json');
+
+                        if (!fs.existsSync(responPath)) {
+                                await sock.sendMessage(from, { text: '📂 Belum ada respon yang disimpan.' });
+                                return;
+                        }
+
+                        const data = JSON.parse(fs.readFileSync(responPath));
+                        const keys = Object.keys(data);
+
+                        if (keys.length === 0) {
+                                await sock.sendMessage(from, { text: '📂 Belum ada respon yang disimpan.' });
+                                return;
+                        }
+
+                        const list = keys.map((k, i) => `*${i + 1}.* ${k} → ${data[k]}`).join('\n\n');
+                        await sock.sendMessage(from, { text: `📋 *Daftar Respon Tersimpan:*\n\n${list}` });
+                } catch (e) {
+                        console.log('❌ Error saat menampilkan list respon:', e);
+                        await sock.sendMessage(from, { text: '❌ Gagal menampilkan daftar respon.' });
+                }
+        }
+        if (command === '.setrespon') {
+                try {
+                        const fs = require('fs');
+                        const path = require('path');
+                        const input = body.match(/\(([^)]+)\)/g);
+
+                        if (!input || input.length < 2) {
+                                await sock.sendMessage(from, { text: '❌ Format salah!\n\nContoh:\n.setrespon (halo bot) (hai juga)' });
+                                return;
+                        }
+
+                        const key = input[0].slice(1, -1).toLowerCase(); // Normalisasi ke huruf kecil
+                        const value = input[1].slice(1, -1);
+
+                        const responPath = path.join(__dirname, './respon.json');
+                        let data = {};
+
+                        if (fs.existsSync(responPath)) {
+                                data = JSON.parse(fs.readFileSync(responPath));
+                        }
+
+                        data[key] = value;
+                        fs.writeFileSync(responPath, JSON.stringify(data, null, 2));
+
+                        await sock.sendMessage(from, {
+                                text: `✅ Respon untuk *${key}* disimpan.\n\n*By Marpolo*`
+                        });
+                } catch (e) {
+                        console.log('❌ Error saat menyimpan respon:', e);
+                }
+        }
         if (msg.message?.imageMessage && msg.message.imageMessage.caption?.toLowerCase() === '.ceklink') {
                 try {
                         const axios = require('axios');
@@ -306,54 +655,6 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                         await sock.sendMessage(from, { text: '❌ Gagal membuat stiker.' }, { quoted: msg });
                 }
         }
-        if (command === '.sendtiktok') {
-                try {
-                        const axios = require('axios');
-                        const { fromBuffer } = require('file-type');
-
-                        if (args.length < 2) {
-                                await sock.sendMessage(from, { text: '❌ Contoh: .sendtiktok <url> <notujuan>' }, { quoted: msg });
-                                return;
-                        }
-
-                        const url = args[0];
-                        const tujuan = args[1].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-
-                        if (!url.includes('tiktok.com')) {
-                                await sock.sendMessage(from, { text: '❌ Masukkan link TikTok yang valid.' }, { quoted: msg });
-                                return;
-                        }
-
-                        const resp = await axios.get('https://api.tiklydown.eu.org/api/download', {
-                                params: { url },
-                                timeout: 15000
-                        });
-
-                        const videoUrl = resp.data?.video?.no_watermark || resp.data?.video?.noWatermark;
-
-                        if (!videoUrl) {
-                                await sock.sendMessage(from, { text: '❌ Gagal mengambil video dari TiklyDown.' }, { quoted: msg });
-                                return;
-                        }
-
-                        const res2 = await axios.get(videoUrl, { responseType: 'arraybuffer' });
-                        const buff = Buffer.from(res2.data);
-                        const type = await fromBuffer(buff);
-
-                        await sock.sendMessage(tujuan, {
-                                video: buff,
-                                mimetype: type.mime,
-                                caption: '✅ Ini video TikTok-nya tanpa watermark.'
-                        });
-
-                } catch (e) {
-                        console.error('Error .sendtiktok →', e.message);
-                        const msgErr = e.response?.status === 403
-                                ? '❌ Akses API ditolak. Coba lagi nanti.'
-                                : '❌ Terjadi kesalahan. Coba lagi nanti.';
-                        await sock.sendMessage(from, { text: msgErr }, { quoted: msg });
-                }
-        }
         if (command === '.sendreminder') {
                 try {
                         if (args.length < 3) {
@@ -385,46 +686,6 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
 
                 } catch (err) {
                         console.log('Error di .sendreminder:', err);
-                }
-        }
-        if (command === '.tiktok') {
-                try {
-                        const axios = require('axios');
-                        const { fromBuffer } = require('file-type');
-                        const url = args[0];
-
-                        if (!url || !url.includes('tiktok')) {
-                                await sock.sendMessage(from, { text: '❌ Contoh: .tiktok https://vt.tiktok.com/…' }, { quoted: msg });
-                                return;
-                        }
-
-                        const resp = await axios.get('https://api.tiklydown.eu.org/api/download', {
-                                params: { url },
-                                timeout: 15000
-                        });
-                        const videoUrl = resp.data?.video?.no_watermark || resp.data?.video?.noWatermark;
-
-                        if (!videoUrl) {
-                                await sock.sendMessage(from, { text: '❌ Gagal mengambil video dari TiklyDown.', quoted: msg });
-                                return;
-                        }
-
-                        const res2 = await axios.get(videoUrl, { responseType: 'arraybuffer' });
-                        const buff = Buffer.from(res2.data);
-                        const type = await fromBuffer(buff);
-
-                        await sock.sendMessage(from, {
-                                video: buff,
-                                mimetype: type.mime,
-                                caption: '✅ Ini videonya tanpa watermark.'
-                        }, { quoted: msg });
-
-                } catch (e) {
-                        console.error('Error .tiktok →', e.message);
-                        const msgErr = e.response?.status === 403
-                                ? '❌ Akses ditolak. Coba lagi nanti.'
-                                : '❌ Terjadi kesalahan. Coba lagi nanti.';
-                        await sock.sendMessage(from, { text: msgErr }, { quoted: msg });
                 }
         }
         if (command === '.setnamagrup') {
@@ -941,7 +1202,6 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
         }
         if (msg.message?.conversation?.toLowerCase().includes('kasih')) {
             try {
-                // Auto-React 👍
                 await sock.sendMessage(from, {
                     react: {
                         text: '👍',
@@ -949,9 +1209,18 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                     }
                 });
 
-                // Auto-Read
                 await sock.readMessages([msg.key]);
             } catch {}
+        }
+        if (msg.message?.conversation?.toLowerCase().includes('gas')) {
+                try {
+                        await sock.sendMessage(from, {
+                                react: {
+                                        text: '👍',
+                                        key: msg.key
+                                }
+                        });
+                } catch {}
         }
         if (msg.key.remoteJid.endsWith('@g.us') && msg.message?.imageMessage) {
             try {
