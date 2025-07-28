@@ -1,220 +1,297 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const {
+        default: makeWASocket,
+        useMultiFileAuthState,
+        DisconnectReason,
+        fetchLatestBaileysVersion
+} = require('@whiskeysockets/baileys');
+
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
-const typingTimers = {};
 const fs = require('fs');
 const path = require('path');
+
+const typingTimers = {};
 let autoCallBlock = true;
+
 const configPath = './db/autocallblock.json';
 if (fs.existsSync(configPath)) {
-    try {
-        const data = JSON.parse(fs.readFileSync(configPath));
-        autoCallBlock = data.status;
-    } catch (e) {
-        console.log('⚠️ Gagal baca status AutoCallBlock, pakai default true');
-    }
+        try {
+                const config = JSON.parse(fs.readFileSync(configPath));
+                autoCallBlock = config.autoCallBlock;
+        } catch (err) {
+                console.error('❌ Gagal membaca config autoCallBlock:', err);
+        }
 }
+
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('./session');
-    const { version } = await fetchLatestBaileysVersion();
-    const sock = makeWASocket({
-        version,
-        auth: state,
-    });
+        const { state, saveCreds } = await useMultiFileAuthState('./auth_info');
+        const { version } = await fetchLatestBaileysVersion();
 
-    // TANGANI QR
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
+        const sock = makeWASocket({
+                version,
+                auth: state,
+        });
 
-        if (qr) {
-            console.log('📲 Scan QR ini:');
-            qrcode.generate(qr, { small: true });
-        }
 
-        if (connection === 'close') {
-            const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-            console.log('⚠️ Koneksi terputus. Alasan:', reason);
-            if (reason !== DisconnectReason.loggedOut) {
-                startBot();
-            }
-        } else if (connection === 'open') {
-            console.log('✅ Bot berhasil tersambung ke WhatsApp!');
-        }
-    });
 sock.ev.on('presence.update', async (update) => {
-    const id = update?.id;
-    const presence = update?.presences?.[id];
+        const id = update?.id;
+        const presence = update?.presences?.[id];
+        if (!presence) return;
 
-    if (!presence) return;
+        const status = presence.lastKnownPresence;
 
-    const status = presence.lastKnownPresence;
+        if (status === 'composing') {
+                try {
+                        await sock.sendPresenceUpdate('composing', id);
+                } catch {}
 
-    // Kalau user mulai ngetik
-    if (status === 'composing') {
-        try {
-            await sock.sendPresenceUpdate('composing', id);
-        } catch {}
+                if (typingTimers[id]) clearTimeout(typingTimers[id]);
 
-        if (typingTimers[id]) clearTimeout(typingTimers[id]);
-
-        // Timer 10 detik agar otomatis berhenti ngetik jika gak ada update lagi
-        typingTimers[id] = setTimeout(async () => {
-            try {
-                await sock.sendPresenceUpdate('available', id);
-            } catch {}
-        }, 10000);
-    }
-
-    // Kalau user berhenti ngetik
-    else if (status === 'paused' || status === 'available') {
-        if (typingTimers[id]) {
-            clearTimeout(typingTimers[id]);
-            delete typingTimers[id];
-        }
-
-        try {
-            await sock.sendPresenceUpdate('available', id);
-        } catch {}
-    }
-});
-    // ==================== AUTO CALL BLOCK ====================
-    sock.ev.on('call', async (call) => {
-        if (autoCallBlock && call) {
-            try {
-                const callerId = call[0]?.from;
-                if (callerId) {
-                    await sock.rejectCall(call[0].id, call[0].from); // tolak panggilan
-                    await sock.sendMessage(callerId, { text: '❌ Maaf, tidak bisa menerima panggilan. Anda akan diblokir otomatis.' });
-                    await sock.updateBlockStatus(callerId, 'block');
-                    console.log(`🚫 Panggilan diblokir dari: ${callerId}`);
+                typingTimers[id] = setTimeout(async () => {
+                        try {
+                                await sock.sendPresenceUpdate('available', id);
+                        } catch {}
+                }, 10000);
+        } else if (status === 'paused' || status === 'available') {
+                if (typingTimers[id]) {
+                        clearTimeout(typingTimers[id]);
+                        delete typingTimers[id];
                 }
-            } catch (err) {
-                console.error('❌ Gagal blokir panggilan:', err);
-            }
+
+                try {
+                        await sock.sendPresenceUpdate('available', id);
+                } catch {}
         }
-    });
+});
 
-    // === Fitur penutup otomatis ===
-    const penutupPath = path.join(__dirname, './database/penutup.json');
-    const originalSendMessage = sock.sendMessage.bind(sock);
+sock.ev.on('call', async (call) => {
+        if (autoCallBlock && call) {
+                try {
+                        const callerId = call[0]?.from;
+                        if (callerId) {
+                                await sock.rejectCall(call[0].id, call[0].from);
+                                await sock.sendMessage(callerId, { text: '❌ Maaf, tidak bisa menerima panggilan. Anda akan diblokir otomatis.' });
+                                await sock.updateBlockStatus(callerId, 'block');
+                                console.log(`🚫 Panggilan diblokir dari: ${callerId}`);
+                        }
+                } catch (err) {
+                        console.error('❌ Gagal blokir panggilan:', err);
+                }
+        }
+});
 
-    sock.sendMessage = async (jid, content, options = {}) => {
+const penutupPath = path.join(__dirname, './database/penutup.json');
+const originalSendMessage = sock.sendMessage.bind(sock);
+sock.sendMessage = async (jid, content, options = {}) => {
         let penutup = '';
         if (fs.existsSync(penutupPath)) {
-            try {
-                const data = JSON.parse(fs.readFileSync(penutupPath));
-                penutup = data.penutup ? `\n\n${data.penutup}` : '';
-            } catch {
-                penutup = '';
-            }
+                try {
+                        const data = JSON.parse(fs.readFileSync(penutupPath));
+                        penutup = data.penutup ? `\n\n${data.penutup}` : '';
+                } catch {
+                        penutup = '';
+                }
         }
 
         if (typeof content?.text === 'string') {
-            content.text += penutup;
+                content.text += penutup;
         }
 
         return originalSendMessage(jid, content, options);
-    };
+};
+
+sock.ev.on('creds.update', saveCreds);
+
 sock.ev.on('messages.upsert', async ({ messages }) => {
-    const msg = messages[0];
-    if (!msg?.message || msg.key.remoteJid === 'status@broadcast') return;
+        const msg = messages[0];
+        if (!msg?.message || msg.key.remoteJid === 'status@broadcast') return;
 
-    const from = msg.key.remoteJid;
-    const pesan = msg.message;
-    const jenis = Object.keys(pesan || {})[0];
+        const from = msg.key.remoteJid;
+        const pesan = msg.message;
+        const jenis = Object.keys(pesan || {})[0];
 
-    // ✅ Fungsi reply universal
-    msg.reply = (teks) => sock.sendMessage(from, { text: teks }, { quoted: msg });
+        msg.reply = (teks) => sock.sendMessage(from, { text: teks }, { quoted: msg });
 
-    const body = pesan?.conversation ||
-                 pesan?.extendedTextMessage?.text ||
-                 pesan?.imageMessage?.caption ||
-                 pesan?.videoMessage?.caption ||
-                 pesan?.documentMessage?.caption ||
-                 '';
-    try {
-        const fs = require('fs');
-        const path = require('path');
-        const responPath = path.join(__dirname, './respon.json');
+        const body = pesan?.conversation ||
+                     pesan?.extendedTextMessage?.text ||
+                     pesan?.imageMessage?.caption ||
+                     pesan?.videoMessage?.caption ||
+                     pesan?.documentMessage?.caption ||
+                     '';
 
-        if (body.startsWith('.jadibot')) {
-                const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-                const { Boom } = require('@hapi/boom');
-                const P = require('pino');
-                const fs = require('fs');
-                const path = require('path');
+        // khusus fitur autoforward
+        try { await require('./fitur/autoforward20chat')(sock, msg); } catch {}
+        try { await require('./fitur/autoforwardmedia')(sock, msg); } catch {}
+        try { await require('./fitur/autobalas30menit')(sock, msg); } catch {}
+        try {
+                const responPath = path.join(__dirname, './respon.json');
+                if (fs.existsSync(responPath)) {
+                        const data = JSON.parse(fs.readFileSync(responPath));
+                        const teksMasuk = (
+                                msg.message?.conversation ||
+                                msg.message?.extendedTextMessage?.text ||
+                                ''
+                        ).toLowerCase();
 
-                const sender = msg.key.fromMe ? sock.user.id : msg.key.participant || msg.key.remoteJid;
-                const senderNum = sender.replace(/[^0-9]/g, '');
-                const sessionFolder = `./jadibot-session/${senderNum}`;
-
-                if (!fs.existsSync(sessionFolder)) fs.mkdirSync(sessionFolder, { recursive: true });
-
-                const startBot = async () => {
-                    const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
-                    const bot = makeWASocket({
-                        auth: state,
-                        printQRInTerminal: true,
-                        logger: P({ level: 'silent' }),
-                    });
-
-                    bot.ev.on('creds.update', saveCreds);
-
-                    bot.ev.on('messages.upsert', async ({ messages }) => {
-                        const m = messages[0];
-                        if (!m.message) return;
-                        const from = m.key.remoteJid;
-                        const isi = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
-                        if (isi === 'ping') {
-                            await bot.sendMessage(from, { text: 'pong dari bot clone!' });
+                        const cocok = Object.keys(data).find(k => k.toLowerCase() === teksMasuk);
+                        if (cocok) {
+                                await sock.sendMessage(from, { text: data[cocok] });
+                                return;
                         }
-                    });
-
-                    bot.ev.on('connection.update', (update) => {
-                        const { connection, lastDisconnect } = update;
-                        if (connection === 'close') {
-                            const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-                            if (reason !== DisconnectReason.loggedOut) {
-                                startBot(); // reconnect
-                            }
-                        } else if (connection === 'open') {
-                            console.log('✅ Bot clone siap:', senderNum);
-                        }
-                    });
-                };
-
-                await msg.reply('✅ Scan QR-nya muncul di termux. Silakan scan...');
-                startBot();
+                }
+        } catch (e) {
+                console.log('❌ Error respon otomatis:', e);
         }
-        if (fs.existsSync(responPath)) {
-            const data = JSON.parse(fs.readFileSync(responPath));
-            const teksMasuk = (
-                msg.message?.conversation ||
-                msg.message?.extendedTextMessage?.text ||
-                ''
-            ).toLowerCase(); // Normalisasi huruf kecil
 
-            const cocok = Object.keys(data).find(k => k.toLowerCase() === teksMasuk);
-            if (cocok) {
-                await sock.sendMessage(from, { text: data[cocok] });
+	// pembatas jangan sampai lewat
+        const pesanMasuk = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+
+        if (/tiktok\.com/.test(pesanMasuk)) {
+                const match = pesanMasuk.match(/https?:\/\/[^\s]+/i);
+                if (!match) return sock.sendMessage(from, { text: "❌ Link TikTok tidak ditemukan." }, { quoted: msg });
+                const url = match[0];
+
+                await sock.sendMessage(from, { text: "⏳ Sedang mengunduh video TikTok..." }, { quoted: msg });
+
+                const { exec } = await import('child_process');
+                const { promisify } = await import('util');
+                const fs = await import('fs');
+                const execAsync = promisify(exec);
+
+                try {
+                        const { stdout } = await execAsync(`python3 py/tiktok.py "${url}"`);
+
+                        if (!fs.existsSync('video.mp4')) {
+                                return sock.sendMessage(from, { text: "❌ Gagal mengunduh video TikTok." }, { quoted: msg });
+                        }
+
+                        const buffer = fs.readFileSync('video.mp4');
+
+                        await sock.sendMessage(from, {
+                                video: buffer,
+                                caption: "✅ Video TikTok berhasil diunduh!"
+                        }, { quoted: msg });
+
+                        fs.unlinkSync('video.mp4');
+
+                } catch (e) {
+                        console.log(e);
+                        await sock.sendMessage(from, { text: "❌ Terjadi kesalahan saat mengunduh video TikTok." }, { quoted: msg });
+                }
+
                 return;
-            }
         }
-    } catch (e) {
-        console.log('❌ Error respon otomatis:', e);
-    }
-    // khusus fitur autoforward
-    try { await require('./fitur/autoforward20chat')(sock, msg); } catch {}
-    try { await require('./fitur/autoforwardmedia')(sock, msg); } catch {}
-    try { await require('./fitur/autobalas30menit')(sock, msg); } catch {}
 
-    const command = body.startsWith('.') ? body.trim().split(' ')[0] : '';
-    const args = body.trim().split(' ').slice(1);
+        const command = body.startsWith('.') ? body.trim().split(' ')[0] : '';
+        const args = body.trim().split(' ').slice(1);
 
         const sender = msg.key.participant || msg.key.remoteJid;
         const isOwner = sender.includes('6282121588338'); // ganti kalau owner beda
 
+// Fitur .sendsticker - Kirim stiker dari gambar ke nomor tujuan
+        if (body.startsWith('.sendsticker')) {
+                let target = body.split(' ')[1];
+                if (!target) {
+                        return sock.sendMessage(from, {
+                                text: '⚠️ Format salah!\n\nGunakan:\n.sendsticker <no tujuan>\nContoh: .sendsticker 6281234567890'
+                        }, { quoted: msg });
+                }
+
+                // Ambil tipe media langsung dari pesan
+                const types = ['imageMessage', 'videoMessage'];
+                let type = null;
+                for (const t of types) {
+                        if (msg.message[t]) {
+                                type = t;
+                                break;
+                        }
+                }
+
+                if (!type) {
+                        return sock.sendMessage(from, {
+                                text: '⚠️ Kirim gambar/video dengan caption .sendsticker <no tujuan>'
+                        }, { quoted: msg });
+                }
+
+                // ✅ Ambil mediaMessage yang benar
+                let mediaMessage = {
+                        message: {
+                                [type]: msg.message[type]
+                        }
+                };
+
+                let buffer = await downloadMediaMessage(mediaMessage, sock);
+                let nomorTujuan = target.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+
+                await sock.sendMessage(nomorTujuan, { sticker: buffer });
+                await sock.sendMessage(from, {
+                        text: `✅ Stiker berhasil dikirim ke wa.me/${target}`
+                }, { quoted: msg });
+        }
+// Fitur .saran
+        if (body.startsWith('.saran')) {
+                let saran = body.slice(7).trim();
+                if (!saran) return sock.sendMessage(from, { text: 'Kirim perintah .saran <isi saran>' }, { quoted: msg });
+
+                let nomorPengirim = sender.split('@')[0];
+                let namaPengirim = msg.pushName || 'Pengguna Tanpa Nama';
+
+                let pesanKeOwner = `📝 *Pesan Saran Masuk!*\n\n` +
+                        `📬 *Dari*: wa.me/${nomorPengirim}\n` +
+                        `👤 *Nama*: ${namaPengirim}\n\n` +
+                        `💡 *Isi Saran*:\n${saran}\n\n` +
+                        `_Pesan ini dikirim otomatis oleh sistem bot_`;
+
+                await sock.sendMessage('6282121588338@s.whatsapp.net', { text: pesanKeOwner });
+
+                sock.sendMessage(from, { text: '✅ Terima kasih, saran kamu sudah terkirim ke owner. Semoga segera ditindaklanjuti ya!' }, { quoted: msg });
+        }
+// Fitur .ssweb
+        if (body.startsWith('.ssweb')) {
+                if (!body.split(' ')[1]) return sock.sendMessage(from, { text: 'Kirim perintah .ssweb <link website>' }, { quoted: msg });
+
+                sock.sendMessage(from, { text: '⏳ Mengambil screenshot website...' }, { quoted: msg });
+
+                let link = body.split(' ')[1];
+
+                const { exec } = require("child_process");
+                exec(`python3 py/ssweb.py "${link}"`, async (err, stdout, stderr) => {
+                        if (err || !stdout.toString().includes("sukses")) {
+                                return sock.sendMessage(from, { text: '❌ Gagal mengambil screenshot.' }, { quoted: msg });
+                        }
+
+                        const path = '/data/data/com.termux/files/home/marbot/downloads/ssweb.png';
+                        const image = require('fs').readFileSync(path);
+                        await sock.sendMessage(from, {
+                                image: image,
+                                caption: '✅ Screenshot berhasil.'
+                        }, { quoted: msg });
+                });
+        }
+	// Fitur .ytmp3
+        if (body.startsWith('.ytmp3')) {
+                if (!body.split(' ')[1]) return sock.sendMessage(from, { text: 'Kirim perintah .ytmp3 <link youtube>' }, { quoted: msg });
+
+                sock.sendMessage(from, { text: '⏳ Sedang mendownload audio dari YouTube...' }, { quoted: msg });
+
+                let link = body.split(' ')[1];
+
+                const { exec } = require("child_process");
+                exec(`python3 py/ytmp3.py "${link}"`, async (err, stdout, stderr) => {
+                        if (err) {
+                                return sock.sendMessage(from, { text: '❌ Gagal mendownload audio YouTube.' }, { quoted: msg });
+                        }
+
+                        const path = '/data/data/com.termux/files/home/marbot/downloads/audio.mp3';
+                        const audio = require('fs').readFileSync(path);
+                        await sock.sendMessage(from, {
+                                audio: audio,
+                                mimetype: 'audio/mpeg',
+                                fileName: 'yt-audio.mp3'
+                        }, { quoted: msg });
+                });
+        }
         if (command === '.cekhargaemas') {
                 try {
                         const axios = require('axios');
@@ -323,69 +400,6 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                 } catch (err) {
                         console.log('❌ Error prediksi crypto:', err);
                         await sock.sendMessage(from, { text: '❌ Gagal mengambil data crypto.' });
-                }
-        }
-        if (command === '.sendtiktok') {
-                try {
-                        const axios = require('axios');
-                        const parts = body.trim().split(' ');
-
-                        if (parts.length !== 3) {
-                                await sock.sendMessage(from, {
-                                        text: '❌ Format salah!\n\nContoh:\n.sendtiktok https://vt.tiktok.com/... 628xxxxxxxxx'
-                                });
-                                return;
-                        }
-
-                        const shortUrl = parts[1];
-                        const nomor = parts[2];
-
-                        await sock.sendMessage(from, {
-                                text: '⏳ Mengambil video TikTok, tunggu bentar...'
-                        });
-
-                        // Resolve link TikTok pendek
-                        const resolvedUrl = await axios.head(shortUrl, { maxRedirects: 5 })
-                                .then(res => res.request.res.responseUrl)
-                                .catch(() => null);
-
-                        if (!resolvedUrl) {
-                                await sock.sendMessage(from, {
-                                        text: '❌ Gagal resolve link TikTok.'
-                                });
-                                return;
-                        }
-
-                        // Ambil video tanpa watermark dari tikwm API
-                        const api = `https://tikwm.com/api/?url=${encodeURIComponent(resolvedUrl)}`;
-                        const response = await axios.get(api);
-                        const result = response.data;
-
-                        if (!result || !result.data || !result.data.play) {
-                                await sock.sendMessage(from, {
-                                        text: '❌ Gagal mengambil video dari TikTok (API error).'
-                                });
-                                return;
-                        }
-
-                        const videoUrl = result.data.play;
-
-                        // Kirim video langsung ke target WhatsApp
-                        await sock.sendMessage(`${nomor}@s.whatsapp.net`, {
-                                video: { url: videoUrl },
-                                caption: '🎥 Video TikTok tanpa watermark'
-                        });
-
-                        // Konfirmasi ke pengirim
-                        await sock.sendMessage(from, {
-                                text: `✅ Video berhasil dikirim ke *${nomor}*`
-                        });
-
-                } catch (e) {
-                        console.log('❌ Error saat proses TikTok:', e);
-                        await sock.sendMessage(from, {
-                                text: '❌ Gagal memproses dan mengirim video TikTok.'
-                        });
                 }
         }
         if (command === '.sendmotivasi') {
