@@ -51,6 +51,6 @@ node bot.js session-jadibot-628123456789
 **By MARPOLO**  
 📞 WhatsApp: [6282121588338](https://wa.me/6282121588338)
 
-
-    ILOVE YOU DIAN ANGGRAINI 💞💞💞💞💞💞💞 
+   
+   >ILOVE YOU DIAN ANGGRAINI 💞💞💞💞💞💞💞 
          	    😅😅😅😅😅
