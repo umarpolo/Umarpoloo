@@ -1,30 +1,27 @@
-# py/ytmp3.py
+import yt_dlp
 import sys
-import os
-from yt_dlp import YoutubeDL
 
 if len(sys.argv) < 2:
-    print("Link tidak ditemukan")
-    sys.exit(1)
+    print("Masukkan link YouTube!")
+    sys.exit()
 
 url = sys.argv[1]
-output_path = "/data/data/com.termux/files/home/marbot/downloads/audio.mp3"
 
-try:
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': output_path,
-        'quiet': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-    }
+ydl_opts = {
+    'format': 'bestaudio/best',
+    'outtmpl': '/data/data/com.termux/files/home/marbot/downloads/%(title)s.%(ext)s',
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',
+    }],
+    'quiet': True,
+    'no_warnings': True
+}
 
-    with YoutubeDL(ydl_opts) as ydl:
+with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    try:
         ydl.download([url])
-    print("SUKSES")
-except Exception as e:
-    print(f"ERROR: {e}")
-    sys.exit(1)
+        print("✅ Berhasil download audio.")
+    except Exception as e:
+        print("❌ Gagal:", str(e))

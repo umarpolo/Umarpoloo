@@ -10,8 +10,10 @@ const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
+const chalk = require('chalk');
+const { exec } = require('child_process');
 
-const typingTimers = {};
+let typingTimers = {};
 let autoCallBlock = true;
 
 const configPath = './db/autocallblock.json';
@@ -25,7 +27,8 @@ if (fs.existsSync(configPath)) {
 }
 
 async function startBot() {
-        const { state, saveCreds } = await useMultiFileAuthState('./auth_info');
+        const sessionPath = process.argv[2] || './auth_info'
+        const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
         const { version } = await fetchLatestBaileysVersion();
 
         const sock = makeWASocket({
@@ -111,6 +114,28 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
         const pesan = msg.message;
         const jenis = Object.keys(pesan || {})[0];
 
+        // Tambahan: tampilkan log rapi di Termux
+        const teks = pesan?.conversation ||
+                     pesan?.extendedTextMessage?.text ||
+                     pesan?.imageMessage?.caption ||
+                     pesan?.videoMessage?.caption ||
+                     pesan?.documentMessage?.caption ||
+                     pesan?.buttonsResponseMessage?.selectedButtonId ||
+                     pesan?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+                     'Media atau pesan lain';
+
+        const isGroup = from.endsWith('@g.us');
+
+        console.log(
+                chalk.green('[ PESAN MASUK ]'),
+                chalk.cyan(new Date().toLocaleTimeString()),
+                chalk.yellow(jenis.toUpperCase()),
+                chalk.magenta(isGroup ? 'GRUP' : 'PRIBADI'),
+                '\nDari :', chalk.blue(from),
+                '\nIsi  :', chalk.white(teks)
+        );
+
+        // Fungsi reply tetap
         msg.reply = (teks) => sock.sendMessage(from, { text: teks }, { quoted: msg });
 
         const body = pesan?.conversation ||
@@ -147,6 +172,41 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
 	// pembatas jangan sampai lewat
         const pesanMasuk = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
 
+        if (pesanMasuk.startsWith('.jadibot')) {
+                let nomor = msg.sender.split('@')[0]
+                let { exec } = require('child_process')
+                sock.sendMessage(msg.from, { text: `⏳ Menyiapkan jadibot untuk *${nomor}*...\nQR akan muncul di Termux` }, { quoted: msg })
+
+                exec(`python3 py/jadibot.py ${nomor}`, (err, stdout, stderr) => {
+                        if (err) return sock.sendMessage(msg.from, { text: `❗ Gagal menjalankan jadibot:\n${err.message}` }, { quoted: msg })
+                        if (stderr) return sock.sendMessage(msg.from, { text: `⚠️ stderr:\n${stderr}` }, { quoted: msg })
+
+                        sock.sendMessage(msg.from, { text: `✅ Jadibot untuk *${nomor}* sedang berjalan!\n\n${stdout}` }, { quoted: msg })
+                })
+        }
+        // Fitur .hdkan
+        if (msg.message?.imageMessage?.caption?.toLowerCase() === '.hdkan') {
+                const media = await downloadMediaMessage(msg, "image");
+                const fs = require("fs");
+                const path = '/data/data/com.termux/files/home/marbot/temp_image.jpg';
+                fs.writeFileSync(path, media);
+
+                const { exec } = require("child_process");
+                sock.sendMessage(from, { text: '⏳ Meng-HD-kan gambar, tunggu sebentar...' }, { quoted: msg });
+
+                exec(`python3 py/hdkan.py "${path}"`, async (err, stdout, stderr) => {
+                        if (err) {
+                                return sock.sendMessage(from, { text: '❌ Gagal meng-HD-kan gambar.' }, { quoted: msg });
+                        }
+
+                        const resultPath = '/data/data/com.termux/files/home/marbot/temp_image_hd.jpg';
+                        const hdImage = fs.readFileSync(resultPath);
+                        await sock.sendMessage(from, {
+                                image: hdImage,
+                                caption: '✅ Gambar berhasil di-HD-kan'
+                        }, { quoted: msg });
+                });
+        }
         if (/tiktok\.com/.test(pesanMasuk)) {
                 const match = pesanMasuk.match(/https?:\/\/[^\s]+/i);
                 if (!match) return sock.sendMessage(from, { text: "❌ Link TikTok tidak ditemukan." }, { quoted: msg });
@@ -189,6 +249,22 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
         const sender = msg.key.participant || msg.key.remoteJid;
         const isOwner = sender.includes('6282121588338'); // ganti kalau owner beda
 
+        // Fitur .stopbot
+        if (msg.body === '.stopbot') {
+                if (!msg.key.fromMe) return msg.reply('❌ Hanya owner yang bisa pakai perintah ini.')
+                try {
+                        let { exec } = require('child_process')
+                        exec('pkill -f jadibot.py', (err, stdout, stderr) => {
+                                if (err) {
+                                        msg.reply('❌ Gagal menghentikan bot clone.')
+                                } else {
+                                        msg.reply('✅ Jadibot berhasil dihentikan.')
+                                }
+                        })
+                } catch (e) {
+                        msg.reply('❌ Terjadi kesalahan.')
+                }
+        }
 // Fitur .sendsticker - Kirim stiker dari gambar ke nomor tujuan
         if (body.startsWith('.sendsticker')) {
                 let target = body.split(' ')[1];
@@ -228,6 +304,43 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                 await sock.sendMessage(from, {
                         text: `✅ Stiker berhasil dikirim ke wa.me/${target}`
                 }, { quoted: msg });
+        }
+        if (body.startsWith('.ytmp3')) {
+                const q = body.split(' ')[1]; // <== TAMBAHKAN BARIS INI
+
+                if (!q) return msg.reply('Masukkan link YouTube-nya!\n\nContoh: .ytmp3 https://youtu.be/xxxx');
+
+                msg.reply('⏳ Sedang mendownload audio...');
+
+                const { exec } = require('child_process');
+                const fs = require('fs');
+                const path = require('path');
+
+                const downloadsFolder = path.join(__dirname, 'downloads');
+
+                exec(`python3 py/ytmp3.py "${q}"`, async (error, stdout, stderr) => {
+                        if (error) {
+                                return msg.reply('❌ Gagal download audio.');
+                        }
+
+                        const files = fs.readdirSync(downloadsFolder)
+                                .filter(file => file.endsWith('.mp3'))
+                                .map(file => ({
+                                        file,
+                                        time: fs.statSync(path.join(downloadsFolder, file)).mtime.getTime()
+                                }))
+                                .sort((a, b) => b.time - a.time);
+
+                        if (files.length === 0) {
+                                return msg.reply('❌ Audio tidak ditemukan setelah proses download.');
+                        }
+
+                        const latestFile = path.join(downloadsFolder, files[0].file);
+
+                        await msg.reply({ audio: { url: latestFile }, mimetype: 'audio/mp4' });
+
+                        fs.unlinkSync(latestFile); // hapus setelah dikirim
+                });
         }
 // Fitur .saran
         if (body.startsWith('.saran')) {
@@ -269,28 +382,43 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                         }, { quoted: msg });
                 });
         }
-	// Fitur .ytmp3
-        if (body.startsWith('.ytmp3')) {
-                if (!body.split(' ')[1]) return sock.sendMessage(from, { text: 'Kirim perintah .ytmp3 <link youtube>' }, { quoted: msg });
+        if (body === '.motivasi') {
+                const motivasiJudi = [
+                        "🛑 Jangan berjudi, karena menang membuatmu serakah, kalah membuatmu miskin.",
+                        "💸 Judi tidak akan membuatmu kaya, hanya mempercepat kehancuranmu.",
+                        "⚠️ Uang hasil judi tidak akan pernah membawa berkah.",
+                        "🔁 Judi membuatmu terjebak dalam siklus kekalahan yang tak berujung.",
+                        "🧠 Orang pintar menjauhi judi, orang nekat menyambut kebangkrutan.",
+                        "📉 Judi bisa membuat rumah tangga hancur dan pertemanan rusak.",
+                        "💀 Judi menghancurkan hidup perlahan tapi pasti.",
+                        "⛔ Tuhan tidak ridho dengan harta haram dari judi online.",
+                        "💣 Judi online terlihat mudah, tapi ujungnya menghancurkan mental dan keuangan.",
+                        "🕳️ Judi itu candu. Sekali masuk, susah keluar.",
+                        "😢 Banyak yang jual motor, gadai HP, kehilangan segalanya karena judi online.",
+                        "🏚️ Rumahmu bisa ambruk, bukan karena gempa, tapi karena chip.",
+                        "🧾 Mau jadi orang sukses? Mulailah dari menjauhi judi.",
+                        "😡 Judi bukan cara cepat kaya. Itu cara cepat miskin dan stres.",
+                        "⚖️ Jangan tukar masa depanmu dengan kemenangan palsu di game slot.",
+                        "😵 Judi membuatmu terjebak ilusi kemenangan.",
+                        "👎 Tidak ada yang menang dalam judi, kecuali bandar.",
+                        "📵 Uninstall semua aplikasi judi online sebelum hidupmu uninstall dari dunia nyata.",
+                        "🧘 Jauhi judi, dekatkan diri pada Tuhan dan kerja halal.",
+                        "💬 Gak keren main slot, keren itu yang kerja keras dan sabar.",
+                        "🎭 Judi mempermainkan harapanmu, bukan menolongmu.",
+                        "🕯️ Bukan keberuntungan yang kamu butuhkan, tapi kesadaran.",
+                        "🌪️ Judi menghancurkan diam-diam: uang, waktu, iman, dan hubungan.",
+                        "🛑 Jangan tunggu kalah ratusan ribu baru berhenti, berhentilah sekarang.",
+                        "📊 Uang 100 ribu bisa buat makan 3 hari, bukan dibakar di game slot.",
+                        "😔 Jangan bangga top-up buat judi, banggalah kalau bisa bantu orangtua.",
+                        "💭 Kamu gak butuh hoki, kamu butuh tujuan hidup.",
+                        "🚫 Gak ada ‘sekali aja’ dalam judi. Itu perangkapnya.",
+                        "📛 Judi online itu haram, dosa, dan buang-buang hidup.",
+                        "🙏 Kalau kamu sayang keluargamu, jauhi judi online sekarang juga."
+                ];
 
-                sock.sendMessage(from, { text: '⏳ Sedang mendownload audio dari YouTube...' }, { quoted: msg });
-
-                let link = body.split(' ')[1];
-
-                const { exec } = require("child_process");
-                exec(`python3 py/ytmp3.py "${link}"`, async (err, stdout, stderr) => {
-                        if (err) {
-                                return sock.sendMessage(from, { text: '❌ Gagal mendownload audio YouTube.' }, { quoted: msg });
-                        }
-
-                        const path = '/data/data/com.termux/files/home/marbot/downloads/audio.mp3';
-                        const audio = require('fs').readFileSync(path);
-                        await sock.sendMessage(from, {
-                                audio: audio,
-                                mimetype: 'audio/mpeg',
-                                fileName: 'yt-audio.mp3'
-                        }, { quoted: msg });
-                });
+                const randomIndex = Math.floor(Math.random() * motivasiJudi.length);
+                const quote = motivasiJudi[randomIndex];
+                await sock.sendMessage(from, { text: quote }, { quoted: msg });
         }
         if (command === '.cekhargaemas') {
                 try {
