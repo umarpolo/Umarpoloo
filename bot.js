@@ -184,29 +184,6 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                         sock.sendMessage(msg.from, { text: `✅ Jadibot untuk *${nomor}* sedang berjalan!\n\n${stdout}` }, { quoted: msg })
                 })
         }
-        // Fitur .hdkan
-        if (msg.message?.imageMessage?.caption?.toLowerCase() === '.hdkan') {
-                const media = await downloadMediaMessage(msg, "image");
-                const fs = require("fs");
-                const path = '/data/data/com.termux/files/home/marbot/temp_image.jpg';
-                fs.writeFileSync(path, media);
-
-                const { exec } = require("child_process");
-                sock.sendMessage(from, { text: '⏳ Meng-HD-kan gambar, tunggu sebentar...' }, { quoted: msg });
-
-                exec(`python3 py/hdkan.py "${path}"`, async (err, stdout, stderr) => {
-                        if (err) {
-                                return sock.sendMessage(from, { text: '❌ Gagal meng-HD-kan gambar.' }, { quoted: msg });
-                        }
-
-                        const resultPath = '/data/data/com.termux/files/home/marbot/temp_image_hd.jpg';
-                        const hdImage = fs.readFileSync(resultPath);
-                        await sock.sendMessage(from, {
-                                image: hdImage,
-                                caption: '✅ Gambar berhasil di-HD-kan'
-                        }, { quoted: msg });
-                });
-        }
         if (/tiktok\.com/.test(pesanMasuk)) {
                 const match = pesanMasuk.match(/https?:\/\/[^\s]+/i);
                 if (!match) return sock.sendMessage(from, { text: "❌ Link TikTok tidak ditemukan." }, { quoted: msg });
@@ -265,82 +242,177 @@ sock.ev.on('messages.upsert', async ({ messages }) => {
                         msg.reply('❌ Terjadi kesalahan.')
                 }
         }
-// Fitur .sendsticker - Kirim stiker dari gambar ke nomor tujuan
-        if (body.startsWith('.sendsticker')) {
-                let target = body.split(' ')[1];
-                if (!target) {
-                        return sock.sendMessage(from, {
-                                text: '⚠️ Format salah!\n\nGunakan:\n.sendsticker <no tujuan>\nContoh: .sendsticker 6281234567890'
-                        }, { quoted: msg });
-                }
+        if (body.startsWith('.bratvid')) {
+                const teks = body.split(' ').slice(1).join(' ');
+                if (!teks) return msg.reply('Masukkan teksnya!\n\nContoh: .bratvid Halo Dunia');
 
-                // Ambil tipe media langsung dari pesan
-                const types = ['imageMessage', 'videoMessage'];
-                let type = null;
-                for (const t of types) {
-                        if (msg.message[t]) {
-                                type = t;
-                                break;
-                        }
-                }
+                msg.reply('⏳ Sedang membuat stiker video...');
 
-                if (!type) {
-                        return sock.sendMessage(from, {
-                                text: '⚠️ Kirim gambar/video dengan caption .sendsticker <no tujuan>'
-                        }, { quoted: msg });
-                }
-
-                // ✅ Ambil mediaMessage yang benar
-                let mediaMessage = {
-                        message: {
-                                [type]: msg.message[type]
-                        }
-                };
-
-                let buffer = await downloadMediaMessage(mediaMessage, sock);
-                let nomorTujuan = target.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-
-                await sock.sendMessage(nomorTujuan, { sticker: buffer });
-                await sock.sendMessage(from, {
-                        text: `✅ Stiker berhasil dikirim ke wa.me/${target}`
-                }, { quoted: msg });
+                const { exec } = require("child_process");
+                exec(`python3 py/bratvid.py "${teks.replace(/"/g, '\\"')}"`, (err, stdout, stderr) => {
+                        if (err || stderr) return msg.reply('Terjadi error saat membuat stiker video.');
+                        const file = stdout.trim();
+                        sock.sendMessage(msg.key.remoteJid, { sticker: { url: file } }, { quoted: msg });
+                });
         }
-        if (body.startsWith('.ytmp3')) {
-                const q = body.split(' ')[1]; // <== TAMBAHKAN BARIS INI
+        if ((body.startsWith('.brat ') || body === '.brat') && !body.startsWith('.bratvid')) {
+                const teks = body.slice(6).trim();
+                if (!teks) return msg.reply('Masukkan teks-nya!\n\nContoh: .brat hallo dunia');
 
-                if (!q) return msg.reply('Masukkan link YouTube-nya!\n\nContoh: .ytmp3 https://youtu.be/xxxx');
+                if (teks.split('.').length > 5) return msg.reply('Maksimal hanya 5 kalimat.');
 
-                msg.reply('⏳ Sedang mendownload audio...');
+                msg.reply('⏳ Sedang membuat stiker...');
 
                 const { exec } = require('child_process');
-                const fs = require('fs');
-                const path = require('path');
+                const output = `/data/data/com.termux/files/home/marbot/tmp/brat.webp`;
 
-                const downloadsFolder = path.join(__dirname, 'downloads');
+                exec(`python3 py/brat.py "${teks.replace(/"/g, '\\"')}"`, async (err) => {
+                        if (err) return msg.reply('Terjadi error saat membuat stiker.');
 
-                exec(`python3 py/ytmp3.py "${q}"`, async (error, stdout, stderr) => {
-                        if (error) {
-                                return msg.reply('❌ Gagal download audio.');
-                        }
-
-                        const files = fs.readdirSync(downloadsFolder)
-                                .filter(file => file.endsWith('.mp3'))
-                                .map(file => ({
-                                        file,
-                                        time: fs.statSync(path.join(downloadsFolder, file)).mtime.getTime()
-                                }))
-                                .sort((a, b) => b.time - a.time);
-
-                        if (files.length === 0) {
-                                return msg.reply('❌ Audio tidak ditemukan setelah proses download.');
-                        }
-
-                        const latestFile = path.join(downloadsFolder, files[0].file);
-
-                        await msg.reply({ audio: { url: latestFile }, mimetype: 'audio/mp4' });
-
-                        fs.unlinkSync(latestFile); // hapus setelah dikirim
+                        await sock.sendMessage(from, {
+                                sticker: { url: output }
+                        }, { quoted: msg });
                 });
+        }
+        // Fitur .blur
+        if (msg.message?.imageMessage && (msg.message.imageMessage.caption?.toLowerCase() === '.blur' || msg.body?.toLowerCase() === '.blur')) {
+                try {
+                        const { writeFileSync, unlinkSync, existsSync, readFileSync } = require('fs')
+                        const { exec } = require('child_process')
+                        const path = require('path')
+
+                        const mediaBuffer = await downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage })
+                        const inputPath = path.join(__dirname, 'temp_image.jpg')
+                        const outputPath = path.join(__dirname, 'blurred.jpg')
+
+                        writeFileSync(inputPath, mediaBuffer)
+
+                        exec(`python py/blur.py ${inputPath} ${outputPath}`, async (err, stdout, stderr) => {
+                                console.log('[DEBUG] Python stdout:', stdout)
+                                console.log('[DEBUG] Python stderr:', stderr)
+
+                                if (err) {
+                                        console.error('[ERROR] Proses Python gagal:', err)
+                                        return sock.sendMessage(msg.key.remoteJid, {
+                                                text: '❌ Gagal memburamkan gambar.'
+                                        }, { quoted: msg })
+                                }
+
+                                if (!existsSync(outputPath)) {
+                                        console.error('[ERROR] File blurred.jpg tidak ditemukan setelah Python')
+                                        return sock.sendMessage(msg.key.remoteJid, {
+                                                text: '❌ File hasil blur tidak ditemukan.'
+                                        }, { quoted: msg })
+                                }
+
+                                try {
+                                        const blurredBuffer = readFileSync(outputPath)
+
+                                        await sock.sendMessage(msg.key.remoteJid, {
+                                                image: blurredBuffer,
+                                                caption: '*Gambar berhasil diblur!*'
+                                        }, { quoted: msg })
+
+                                        unlinkSync(inputPath)
+                                        unlinkSync(outputPath)
+                                } catch (e) {
+                                        console.error('[ERROR] Gagal kirim gambar blur:', e)
+                                        sock.sendMessage(msg.key.remoteJid, {
+                                                text: '❌ Gagal mengirim gambar hasil blur.'
+                                        }, { quoted: msg })
+                                }
+                        })
+                } catch (e) {
+                        console.error('[ERROR .blur]', e)
+                        sock.sendMessage(msg.key.remoteJid, {
+                                text: '❌ Terjadi kesalahan saat proses blur.'
+                        }, { quoted: msg })
+                }
+        }
+        if (body.startsWith('.ytmp3')) {
+                const q = body.split(' ')[1];
+
+                if (!q) return msg.reply('Masukkan link YouTube-nya!\n\nContoh: .ytmp3 https://youtu.be/xxxx');
+
+                await msg.reply('⏳ Sedang mendownload audio...');
+
+                const { exec } = require('child_process');
+                const fs = require('fs');
+                const path = require('path');
+
+                const downloadsFolder = path.join(__dirname, 'downloads');
+
+                exec(`python3 py/ytmp3.py "${q}"`, async (error, stdout, stderr) => {
+                        if (error) {
+                                return msg.reply('❌ Gagal download audio.');
+                        }
+
+                        const files = fs.readdirSync(downloadsFolder)
+                                .filter(file => file.endsWith('.mp3'))
+                                .map(file => ({
+                                        file,
+                                        time: fs.statSync(path.join(downloadsFolder, file)).mtime.getTime()
+                                }))
+                                .sort((a, b) => b.time - a.time);
+
+                        if (files.length === 0) {
+                                return msg.reply('❌ Audio tidak ditemukan setelah proses download.');
+                        }
+
+                        const latestFile = path.join(downloadsFolder, files[0].file);
+
+                        await sock.sendMessage(from, {
+                                audio: { url: latestFile },
+                                mimetype: 'audio/mp4'
+                        }, { quoted: msg });
+
+                        fs.unlinkSync(latestFile);
+                });
+        }
+        if (teks.startsWith('.gambar ')) {
+                try {
+                        const tema = teks.split(' ').slice(1).join(' ');
+                        if (!tema) return sock.sendMessage(msg.key.remoteJid, { text: 'Masukkan tema gambar. Contoh: .gambar kucing' }, { quoted: msg });
+
+                        const { execSync } = require('child_process');
+                        const url = execSync(`python py/gambar.py "${tema}"`).toString().trim();
+
+                        const axios = require('axios');
+                        const res = await axios.get(url, { responseType: 'arraybuffer' });
+
+                        await sock.sendMessage(msg.key.remoteJid, {
+                                image: res.data,
+                                caption: `Gambar bertema: ${tema}`
+                        }, { quoted: msg });
+
+                } catch (err) {
+                        console.error(err);
+                        await sock.sendMessage(msg.key.remoteJid, { text: 'Gagal mengambil gambar.' }, { quoted: msg });
+                }
+        }
+        if (command === '.coffe') {
+                try {
+                        const axios = require('axios');
+                        const fs = require('fs');
+                        const path = require('path');
+
+                        // Ambil gambar kopi dari API
+                        const res = await axios.get('https://coffee.alexflipnote.dev/random.json');
+                        const imageUrl = res.data.file;
+
+                        // Unduh gambar
+                        const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+                        const buffer = Buffer.from(response.data, 'binary');
+
+                        await sock.sendMessage(msg.key.remoteJid, {
+                                image: buffer,
+                                caption: '☕ Secangkir kopi untukmu 🍂',
+                        }, { quoted: msg });
+                } catch (e) {
+                        await sock.sendMessage(msg.key.remoteJid, {
+                                text: '❌ Gagal mengambil gambar kopi.',
+                        }, { quoted: msg });
+                }
         }
 // Fitur .saran
         if (body.startsWith('.saran')) {
