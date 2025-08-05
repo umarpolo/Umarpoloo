@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Jalankan semua jadibot (asumsikan pakai script Python atau JS)
+# Kamu bisa tambah baris berikut sesuai jumlah jadibot yang kamu punya
+
+echo "[+] Menjalankan jadibot 6283867787409..."
+python3 py/jadibot.py 6283867787409 &
+
+# Tunggu semua proses selesai (opsional, bisa dihilangkan)
+wait

@@ -1,0 +1,42 @@
+{
+    "miya": {
+        "countered_by": ["Natalia", "Saber", "Helcurt"],
+        "tips": "Gunakan hero dengan burst atau kemampuan menghilang."
+    },
+    "saber": {
+        "countered_by": ["Chou", "Khufra", "Diggie"],
+        "tips": "Gunakan hero dengan crowd control untuk hentikan ulti Saber."
+    },
+    "alucard": {
+        "countered_by": ["Eudora", "Valir", "Kaja"],
+        "tips": "Lock dan burst Alucard sebelum dia lompat ke backline."
+    },
+    "layla": {
+        "countered_by": ["Hayabusa", "Natalia", "Franco"],
+        "tips": "Gunakan assassin untuk langsung pick-off Layla dari jauh."
+    },
+    "gusion": {
+        "countered_by": ["Helcurt", "Chou", "Saber"],
+        "tips": "Gunakan disable cepat dan hindari dive-nya."
+    },
+    "zilong": {
+        "countered_by": ["Eudora", "Aurora", "Valir"],
+        "tips": "CC dan burst magic ampuh hentikan Zilong."
+    },
+    "granger": {
+        "countered_by": ["Hayabusa", "Ling", "Helcurt"],
+        "tips": "Gunakan assassin gesit untuk masukin ke backline."
+    },
+    "brody": {
+        "countered_by": ["Natalia", "Lancelot", "Saber"],
+        "tips": "Jangan biarkan Brody free hit, zoning dia dari awal."
+    },
+    "aldous": {
+        "countered_by": ["Valir", "Ruby", "Phoveus"],
+        "tips": "Gunakan hero dengan anti dash atau disable cepat."
+    },
+    "fanny": {
+        "countered_by": ["Khufra", "Saber", "Eudora"],
+        "tips": "Gunakan CC dan timing pas untuk hentikan kabelnya."
+    }
+}

@@ -1,0 +1,42 @@
+import sys
+import requests
+
+def format_number(n):
+        return f"{n:,.2f}"
+
+def get_top_losers(days):
+        url = f'https://api.coingecko.com/api/v3/coins/markets'
+        params = {
+                'vs_currency': 'usd',
+                'order': 'market_cap_desc',
+                'per_page': 100,
+                'page': 1,
+                'price_change_percentage': f'{days}d'
+        }
+        res = requests.get(url, params=params)
+        data = res.json()
+
+        key = f'price_change_percentage_{days}d_in_currency'
+        sorted_data = sorted(data, key=lambda x: x.get(key, 0))[:10]
+
+        hasil = f"📉 *Top 10 Penurunan Crypto {days} Hari Terakhir*\n\n"
+        for i, coin in enumerate(sorted_data, 1):
+                persen = coin.get(key, 0)
+                harga = format_number(coin.get('current_price', 0))
+                hasil += f"{i}. {coin['name']} ({coin['symbol'].upper()})\n"
+                hasil += f"   ↓ {persen:.2f}% | ${harga}\n"
+        return hasil
+
+if __name__ == "__main__":
+        if len(sys.argv) != 2:
+                print("⚠️ Gunakan: .toplose <jumlah_hari>")
+                sys.exit(1)
+
+        try:
+                hari = int(sys.argv[1])
+                if hari not in [1, 7, 14, 30, 90, 180, 365, 730]:
+                        print("⚠️ Hanya mendukung hari: 1, 7, 14, 30, 90, 180, 365, 730")
+                        sys.exit(1)
+                print(get_top_losers(hari))
+        except:
+                print("⚠️ Masukkan angka hari yang valid.")
